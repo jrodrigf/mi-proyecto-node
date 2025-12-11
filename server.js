@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+
 console.log('🚀 Remote Browser - EVENT-DRIVEN + SAFE CAPTURE + EXTRA FRAME + SCROLL-FRIENDLY');
 console.log('===============================================================================');
 
