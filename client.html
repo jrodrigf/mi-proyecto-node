@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Browser Simple</title>
+    <style>
+        /* ESTILOS MÍNIMOS Y FUNCIONALES */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            background: #000; 
+            overflow: hidden; 
+            height: 100vh;
+            cursor: none;
+            font-family: monospace;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #remoteImage {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+            display: block;
+        }
+        
+        #pointer {
+            position: fixed;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid #0f0;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.7);
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            z-index: 999;
+            display: block;
+        }
+        
+        #pointer.clicking {
+            background: rgba(0, 255, 0, 0.2);
+        }
+        
+        #status {
+            position: fixed;
+            top: 8px;
+            right: 8px;
+            padding: 4px 8px;
+            background: rgba(0,0,0,0.7);
+            color: #0f0;
+            font-size: 12px;
+            border-radius: 4px;
+            z-index: 1000;
+        }
+        
+        /* BARRA LATERAL IZQUIERDA SIMPLE (oculta por defecto, aparece al acercarse a la izquierda) */
+        #floatingMenu {
+            position: fixed;
+            top: 50%;
+            left: 0;
+            transform: translate(-110%, -50%); /* escondido hacia la izquierda */
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 1500;
+            opacity: 0;
+            transition: transform 0.15s ease-out, opacity 0.15s ease-out;
+        }
+        
+        #floatingMenu button {
+            background: rgba(0,0,0,0.8);
+            color: #0f0;
+            border: 1px solid #0f0;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        #floatingMenu button:hover {
+            background: rgba(0,255,0,0.1);
+        }
+        
+        /* ZONA INVISIBLE DE ACTIVACIÓN A LA IZQUIERDA */
+        #menuActivationZone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 30px;
+            height: 100vh;
+            z-index: 1400;
+        }
+        
+        /* LOADING SIMPLE */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        .spinner {
+            border: 3px solid #333;
+            border-top: 3px solid #0f0;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- ZONA DE ACTIVACIÓN -->
+    <div id="menuActivationZone"></div>
+    
+    <!-- CONTENEDOR -->
+    <div id="container">
+        <img id="remoteImage" alt="Remote Browser">
+        <!-- PUNTERO -->
+        <div id="pointer"></div>
+    </div>
+    
+    <!-- ESTADO -->
+    <div id="status">Desconectado</div>
+    
+    <!-- BARRA LATERAL VERTICAL -->
+    <div id="floatingMenu">
+        <button class="menu-btn" onclick="goBack()" title="Atrás">←</button>
+        <button class="menu-btn" onclick="goForward()" title="Adelante">→</button>
+        <button class="menu-btn" onclick="reloadPage()" title="Recargar">↻</button>
+        <div style="height:1px;background:#333;margin:4px 0;"></div>
+        <button class="menu-btn" onclick="zoomOut()" title="Alejar">−</button>
+        <button class="menu-btn" onclick="resetZoom()" title="Reset Zoom">100%</button>
+        <button class="menu-btn" onclick="zoomIn()" title="Acercar">+</button>
+    </div>
+    
+    <!-- LOADING INICIAL -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div style="color:#0f0;margin-bottom:20px;">Conectando...</div>
+        
+        <div style="border:1px solid #0f0;padding:10px;border-radius:6px;">
+            <div style="font-size:12px;color:#0f0;margin-bottom:8px;">
+                Configurar conexión:
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#0f0;">
+                <label>
+                    userId: 
+                    <input id="userId" style="width:180px;" value="Juan24">
+                </label>
+                <label>
+                    URL:
+                    <input id="url" style="width:300px;" value="https://es.wikipedia.org/wiki/Wikipedia:Portada">
+                </label>
+                <button onclick="connect()" style="margin-top:6px;">Conectar</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ===== CONFIGURACIÓN SIMPLE =====
+        let ws = null;
+        let isConnected = false;
+        let pointerVisible = true;
+        let imageNaturalSize = { width: 1280, height: 720 };
+        let currentZoom = 1;
+        let lastScrollSent = 0;
+        const SCROLL_THROTTLE_MS = 30;
+        
+        // Elementos DOM
+        const remoteImage = document.getElementById('remoteImage');
+        const pointer = document.getElementById('pointer');
+        const status = document.getElementById('status');
+        const floatingMenu = document.getElementById('floatingMenu');
+        const loading = document.getElementById('loading');
+        const menuActivationZone = document.getElementById('menuActivationZone');
+        
+        // Para que el menú no desaparezca cuando el ratón está encima del menú
+        let menuHover = false;
+        
+        // ===== FUNCIONES DE ESTADO =====
+        function setStatus(text, color = '#0f0') {
+            status.textContent = text;
+            status.style.color = color;
+        }
+        
+        function showLoading(show) {
+            loading.style.display = show ? 'flex' : 'none';
+        }
+        
+        // ===== FUNCIÓN GENÉRICA PARA ENVIAR INTERACCIONES =====
+        function sendInteraction(type, data) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const payload = { type, ...data };
+            ws.send(JSON.stringify(payload));
+        }
+        
+        // ===== FUNCIONES DE CONTROL =====
+        function reloadPage() {
+            sendInteraction('reload', {});
+        }
+        
+        function goBack() {
+            sendInteraction('back', {});
+        }
+        
+        function goForward() {
+            sendInteraction('forward', {});
+        }
+        
+        function zoomIn() {
+            currentZoom = Math.min(2, currentZoom + 0.1);
+            remoteImage.style.transform = `scale(${currentZoom})`;
+        }
+        
+        function zoomOut() {
+            currentZoom = Math.max(0.5, currentZoom - 0.1);
+            remoteImage.style.transform = `scale(${currentZoom})`;
+        }
+        
+        function resetZoom() {
+            currentZoom = 1;
+            remoteImage.style.transform = 'scale(1)';
+        }
+        
+        window.reloadPage = reloadPage;
+        window.goBack = goBack;
+        window.goForward = goForward;
+        window.zoomIn = zoomIn;
+        window.zoomOut = zoomOut;
+        window.resetZoom = resetZoom;
+        window.connect = connect;
+        
+        // ===== PUNTERO =====
+        document.addEventListener('mousemove', (event) => {
+            if (!pointerVisible) return;
+            pointer.style.left = event.clientX + 'px';
+            pointer.style.top = event.clientY + 'px';
+            pointer.style.display = 'block';
+        });
+        
+        // ===== GEOMETRÍA - CÁLCULO PRECISO =====
+        function getPreciseCoordinates(clientX, clientY) {
+            const rect = remoteImage.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
+            
+            const containerRatio = rect.width / rect.height;
+            const imageRatio = imageNaturalSize.width / imageNaturalSize.height;
+            
+            let drawWidth, drawHeight, offsetX, offsetY;
+            
+            if (containerRatio > imageRatio) {
+                drawHeight = rect.height;
+                drawWidth = drawHeight * imageRatio;
+                offsetX = (rect.width - drawWidth) / 2;
+                offsetY = 0;
+            } else {
+                drawWidth = rect.width;
+                drawHeight = drawWidth / imageRatio;
+                offsetX = 0;
+                offsetY = (rect.height - drawHeight) / 2;
+            }
+            
+            const relX = (clientX - rect.left - offsetX) / drawWidth;
+            const relY = (clientY - rect.top - offsetY) / drawHeight;
+            
+            if (relX < 0 || relX > 1 || relY < 0 || relY > 1) {
+                return null;
+            }
+            
+            return {
+                x: Math.round(relX * imageNaturalSize.width),
+                y: Math.round(relY * imageNaturalSize.height)
+            };
+        }
+        
+        // ===== CONEXIÓN =====
+        function connect() {
+            const userId = document.getElementById('userId').value.trim();
+            const targetUrl = document.getElementById('url').value.trim();
+            
+            if (!userId || !targetUrl) {
+                alert('Completa ambos campos');
+                return;
+            }
+            
+            const sessionId = 'session_' + Date.now();
+            const wsUrl = `ws://localhost:8080/?userId=${encodeURIComponent(userId)}&sessionId=${encodeURIComponent(sessionId)}&url=${encodeURIComponent(targetUrl)}`;
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+            
+            setStatus('Conectando...', '#ff0');
+            showLoading(true);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                isConnected = true;
+                setStatus('Conectado');
+                showLoading(false);
+            };
+            
+            ws.onmessage = (event) => {
+                const blob = new Blob([event.data], { type: 'image/jpeg' });
+                const url = URL.createObjectURL(blob);
+                
+                const img = new Image();
+                img.onload = () => {
+                    remoteImage.src = url;
+                    URL.revokeObjectURL(url);
+                    
+                    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        imageNaturalSize.width = img.naturalWidth;
+                        imageNaturalSize.height = img.naturalHeight;
+                    }
+                };
+                img.src = url;
+            };
+            
+            ws.onclose = () => {
+                isConnected = false;
+                setStatus('Desconectado', '#f00');
+            };
+            
+            ws.onerror = (err) => {
+                console.error('WS error:', err);
+                setStatus('Error WS', '#f00');
+            };
+        }
+        
+        // ===== INTERACCIONES DE RATÓN =====
+        remoteImage.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            
+            const coords = getPreciseCoordinates(event.clientX, event.clientY);
+            if (!coords) return;
+            
+            pointer.classList.add('clicking');
+            
+            sendInteraction('click', {
+                x: coords.x,
+                y: coords.y,
+                button: event.button === 2 ? 'right' : 'left'
+            });
+        });
+        
+        remoteImage.addEventListener('mouseup', () => {
+            pointer.classList.remove('clicking');
+        });
+        
+        remoteImage.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            
+            const coords = getPreciseCoordinates(event.clientX, event.clientY);
+            if (!coords) return;
+            
+            pointer.classList.add('clicking');
+            
+            sendInteraction('click', {
+                x: coords.x,
+                y: coords.y,
+                button: 'right'
+            });
+            
+            setTimeout(() => pointer.classList.remove('clicking'), 200);
+        });
+        
+        // Scroll turbo (con throttle para no saturar)
+        remoteImage.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            const now = Date.now();
+            if (now - lastScrollSent < SCROLL_THROTTLE_MS) return;
+            lastScrollSent = now;
+            
+            // Scroll 50% más rápido
+            sendInteraction('scroll', {
+                deltaX: event.deltaX * 1.5,
+                deltaY: event.deltaY * 1.5
+            });
+        });
+        
+        // ===== TECLADO =====
+        document.addEventListener('keydown', (event) => {
+            // Ignorar solo los inputs del formulario de conexión
+            if (event.target.tagName === 'INPUT' && 
+                (event.target.id === 'userId' || event.target.id === 'url')) {
+                return;
+            }
+            
+            // Atajos Ctrl / Meta para zoom y recarga
+            if (event.ctrlKey || event.metaKey) {
+                switch (event.key) {
+                    case '=':
+                    case '+':
+                        event.preventDefault();
+                        zoomIn();
+                        return;
+                    case '-':
+                        event.preventDefault();
+                        zoomOut();
+                        return;
+                    case '0':
+                        event.preventDefault();
+                        resetZoom();
+                        return;
+                    case 'r':
+                        event.preventDefault();
+                        reloadPage();
+                        return;
+                }
+            }
+            
+            // Teclas de función
+            switch (event.key) {
+                case 'F5':
+                    event.preventDefault();
+                    reloadPage();
+                    return;
+                case 'F11':
+                    event.preventDefault();
+                    toggleFullscreen();
+                    return;
+            }
+            
+            // Teclas especiales
+            const keyMap = {
+                'Enter': 'Enter',
+                'Escape': 'Escape',
+                'Tab': 'Tab',
+                'Backspace': 'Backspace',
+                'Delete': 'Delete',
+                'ArrowUp': 'ArrowUp',
+                'ArrowDown': 'ArrowDown',
+                'ArrowLeft': 'ArrowLeft',
+                'ArrowRight': 'ArrowRight',
+                ' ': 'Space'
+            };
+            
+            if (keyMap[event.key]) {
+                event.preventDefault();
+                sendInteraction('key', { key: keyMap[event.key] });
+            } 
+            else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                event.preventDefault();
+                sendInteraction('key', { text: event.key });
+            }
+        });
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.warn(`Error al entrar en fullscreen: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // ===== MOSTRAR / OCULTAR MENÚ LATERAL COMO ANTES =====
+        menuActivationZone.addEventListener('mouseenter', () => {
+            floatingMenu.style.transform = 'translate(0, -50%)';
+            floatingMenu.style.opacity = '1';
+        });
+        
+        menuActivationZone.addEventListener('mouseleave', () => {
+            // si el ratón no está sobre el menú, lo escondemos
+            setTimeout(() => {
+                if (!menuHover) {
+                    floatingMenu.style.transform = 'translate(-110%, -50%)';
+                    floatingMenu.style.opacity = '0';
+                }
+            }, 150);
+        });
+        
+        floatingMenu.addEventListener('mouseenter', () => {
+            menuHover = true;
+            floatingMenu.style.transform = 'translate(0, -50%)';
+            floatingMenu.style.opacity = '1';
+        });
+        
+        floatingMenu.addEventListener('mouseleave', () => {
+            menuHover = false;
+            floatingMenu.style.transform = 'translate(-110%, -50%)';
+            floatingMenu.style.opacity = '0';
+        });
+        
+        pointer.style.display = 'block';
+        
+        // Conectar automáticamente si hay parámetros
+        const urlParams = new URLSearchParams(window.location.search);
+        const userIdParam = urlParams.get('userId');
+        const urlParam = urlParams.get('url');
+        
+        if (userIdParam && urlParam) {
+            document.getElementById('userId').value = userIdParam;
+            document.getElementById('url').value = urlParam;
+            setTimeout(() => connect(), 500);
+        }
+    </script>
+</body>
+</html>
